@@ -1,13 +1,14 @@
 """
 YouTube Metadata Extractor Module
-Handles extracting comprehensive video metadata and thumbnails using yt-dlp
-with multi-stage mobile client fallback and direct YouTube page parsing.
+Handles extracting comprehensive video metadata, HD thumbnails, COPPA "Made for Kids" status,
+and Playlist / List information with multi-stage mobile client fallback.
 """
 
 import re
 import json
 from datetime import datetime
 from typing import Dict, Any, List, Optional
+from urllib.parse import urlparse, parse_qs
 import requests
 import yt_dlp
 
@@ -168,6 +169,73 @@ def get_best_thumbnails(raw_thumbnails: List[Dict[str, Any]], video_id: str) -> 
         'raw_count': len(raw_thumbnails)
     }
 
+def extract_kids_and_playlist(input_url: str, video_id: str) -> Dict[str, Any]:
+    """
+    Extracts COPPA 'Made for Kids' status, Privacy/Listing status,
+    and Playlist / List Name details.
+    """
+    watch_url = f"https://www.youtube.com/watch?v={video_id}"
+    # Note: omit Accept-Language so YouTube returns standard English labels
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    }
+    
+    is_made_for_kids = False
+    listing_status = "Public (Listed)"
+    
+    try:
+        resp = requests.get(watch_url, headers=headers, timeout=8)
+        text = resp.text
+        if "Made for Kids" in text or "content that is Made for Kids" in text or '"isChildDirected":true' in text:
+            is_made_for_kids = True
+            
+        if '"isUnlisted":true' in text:
+            listing_status = "Unlisted (Link only)"
+        elif '"isPrivate":true' in text:
+            listing_status = "Private"
+    except Exception:
+        pass
+
+    # Extract Playlist / List Name
+    parsed = urlparse(input_url)
+    qs = parse_qs(parsed.query)
+    list_id = qs.get('list', [None])[0]
+    
+    list_name = "Not part of a playlist (Single Video)"
+    list_url = None
+    has_playlist = False
+    
+    if list_id:
+        has_playlist = True
+        list_url = f"https://www.youtube.com/playlist?list={list_id}"
+        if list_id.startswith('RD'):
+            list_name = f"YouTube Mix / Radio Playlist ({list_id})"
+        elif list_id == 'WL':
+            list_name = "Watch Later"
+        elif list_id == 'LL':
+            list_name = "Liked Videos"
+        else:
+            try:
+                ydl_opts = {'quiet': True, 'extract_flat': True, 'skip_download': True}
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    pl_info = ydl.extract_info(list_url, download=False)
+                    if pl_info and pl_info.get('title'):
+                        list_name = pl_info.get('title')
+                    else:
+                        list_name = f"Playlist ({list_id})"
+            except Exception:
+                list_name = f"Playlist ({list_id})"
+
+    return {
+        'is_made_for_kids': is_made_for_kids,
+        'made_for_kids_label': "Yes (Made for Kids)" if is_made_for_kids else "No (Not Made for Kids)",
+        'has_playlist': has_playlist,
+        'list_name': list_name,
+        'list_id': list_id,
+        'list_url': list_url,
+        'listing_status': listing_status
+    }
+
 def scrape_youtube_page_fallback(video_id: str) -> Dict[str, Any]:
     """
     Resilient fallback extraction using YouTube watch page parsing + oEmbed API.
@@ -176,10 +244,8 @@ def scrape_youtube_page_fallback(video_id: str) -> Dict[str, Any]:
     canonical_url = f"https://www.youtube.com/watch?v={video_id}"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
     }
 
-    # Fetch watch page HTML
     resp = requests.get(canonical_url, headers=headers, timeout=12)
     html = resp.text
 
@@ -193,7 +259,6 @@ def scrape_youtube_page_fallback(video_id: str) -> Dict[str, Any]:
     view_count = None
     duration_secs = None
 
-    # Parse ytInitialPlayerResponse JSON
     match = re.search(r'ytInitialPlayerResponse\s*=\s*({.+?});(?:var\s|<)', html)
     if not match:
         match = re.search(r'var ytInitialPlayerResponse\s*=\s*({.+?});', html)
@@ -218,7 +283,6 @@ def scrape_youtube_page_fallback(video_id: str) -> Dict[str, Any]:
         except Exception:
             pass
 
-    # If title still empty, check oEmbed
     if not title or title == "YouTube Video":
         try:
             oembed_resp = requests.get(f"https://www.youtube.com/oembed?url={canonical_url}&format=json", timeout=8)
@@ -248,7 +312,8 @@ def scrape_youtube_page_fallback(video_id: str) -> Dict[str, Any]:
 def extract_metadata(input_url_or_id: str) -> Dict[str, Any]:
     """
     Main extraction function.
-    Extracts complete video metadata and HD thumbnails using yt-dlp with automatic fallbacks.
+    Extracts complete video metadata, HD thumbnails, 'Made for Kids' status,
+    and playlist / list information.
     """
     video_id = extract_video_id(input_url_or_id)
     if not video_id:
@@ -276,7 +341,7 @@ def extract_metadata(input_url_or_id: str) -> Dict[str, Any]:
         with yt_dlp.YoutubeDL(ydl_opts_1) as ydl:
             info = ydl.extract_info(canonical_url, download=False)
     except Exception as e1:
-        # Extraction Strategy 2: yt-dlp with dedicated android client
+        # Extraction Strategy 2: Dedicated android client
         try:
             ydl_opts_2 = {
                 'quiet': True,
@@ -293,7 +358,7 @@ def extract_metadata(input_url_or_id: str) -> Dict[str, Any]:
             with yt_dlp.YoutubeDL(ydl_opts_2) as ydl:
                 info = ydl.extract_info(canonical_url, download=False)
         except Exception as e2:
-            # Extraction Strategy 3: Direct Web Scraping Fallback
+            # Extraction Strategy 3: Web scraping fallback
             try:
                 info = scrape_youtube_page_fallback(video_id)
             except Exception as e3:
@@ -336,6 +401,9 @@ def extract_metadata(input_url_or_id: str) -> Dict[str, Any]:
     # Thumbnails
     thumb_data = get_best_thumbnails(info.get('thumbnails', []), video_id)
 
+    # Kids & Playlist Information
+    extended = extract_kids_and_playlist(input_url_or_id, video_id)
+
     # Formatted tags versions
     tags_comma = ", ".join(tags) if tags else ""
     tags_hashtag = " ".join([f"#{re.sub(r'[^a-zA-Z0-9_]', '', t)}" for t in tags if t]) if tags else ""
@@ -349,6 +417,9 @@ def extract_metadata(input_url_or_id: str) -> Dict[str, Any]:
         f"Channel: {channel_name} ({channel_url})",
         f"Category: {primary_category}",
         f"Date Published: {dates['formatted']} ({dates['iso']})",
+        f"Made for Kids: {extended['made_for_kids_label']}",
+        f"List Name: {extended['list_name']}",
+        f"Listing Status: {extended['listing_status']}",
         f"Duration: {duration_formatted}",
         f"Views: {format_number(view_count)}",
         f"Likes: {format_number(like_count)}",
@@ -371,6 +442,9 @@ def extract_metadata(input_url_or_id: str) -> Dict[str, Any]:
 - **Channel:** [{channel_name}]({channel_url})
 - **Category:** `{primary_category}`
 - **Published:** {dates['formatted']} (`{dates['iso']}`)
+- **Made for Kids:** **{extended['made_for_kids_label']}**
+- **List / Playlist Name:** `{extended['list_name']}`
+- **Listing Status:** `{extended['listing_status']}`
 - **Duration:** {duration_formatted}
 - **Views:** {format_number(view_count)} | **Likes:** {format_number(like_count)}
 - **HD Thumbnail:** [View / Download]({thumb_data['best_hd']})
@@ -417,6 +491,13 @@ def extract_metadata(input_url_or_id: str) -> Dict[str, Any]:
         'comment_count_formatted': format_number(comment_count),
         'hd_thumbnail': thumb_data['best_hd'],
         'thumbnail_variants': thumb_data['variants'],
+        'is_made_for_kids': extended['is_made_for_kids'],
+        'made_for_kids_label': extended['made_for_kids_label'],
+        'has_playlist': extended['has_playlist'],
+        'list_name': extended['list_name'],
+        'list_id': extended['list_id'],
+        'list_url': extended['list_url'],
+        'listing_status': extended['listing_status'],
         'summary_text': summary_text,
         'summary_markdown': summary_markdown
     }

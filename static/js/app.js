@@ -225,14 +225,47 @@ function renderMetadata(data) {
     document.getElementById('durationVal').textContent = data.duration_formatted || 'N/A';
     document.getElementById('viewsVal').textContent = data.view_count_formatted || '0';
 
+    // 3. NEW: Compliance & List Information
+    // Made for Kids
+    const kidsStatusVal = document.getElementById('kidsStatusVal');
+    const kidsIconContainer = document.getElementById('kidsIconContainer');
+    const kidsIcon = document.getElementById('kidsIcon');
+
+    if (data.is_made_for_kids) {
+        kidsStatusVal.innerHTML = `<span class="text-amber-400 font-bold">Yes</span> <span class="text-xs text-slate-400">(Made for Kids)</span>`;
+        kidsIconContainer.className = 'p-1.5 rounded-lg bg-amber-500/20 text-amber-400';
+        kidsIcon.setAttribute('data-lucide', 'smile');
+    } else {
+        kidsStatusVal.innerHTML = `<span class="text-emerald-400 font-bold">No</span> <span class="text-xs text-slate-400">(Not Made for Kids)</span>`;
+        kidsIconContainer.className = 'p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400';
+        kidsIcon.setAttribute('data-lucide', 'check');
+    }
+
+    // List / Playlist Name
+    const listNameVal = document.getElementById('listNameVal');
+    const playlistLink = document.getElementById('playlistLink');
+    listNameVal.textContent = data.list_name || 'Single Video (No Playlist)';
+    listNameVal.title = data.list_name || '';
+
+    if (data.has_playlist && data.list_url) {
+        playlistLink.href = data.list_url;
+        playlistLink.classList.remove('hidden');
+    } else {
+        playlistLink.classList.add('hidden');
+    }
+
+    // Listing Status (Public / Unlisted / Private)
+    const listingStatusVal = document.getElementById('listingStatusVal');
+    listingStatusVal.textContent = data.listing_status || 'Public (Listed)';
+
     // Video ID
     document.getElementById('videoIdVal').textContent = data.id;
 
-    // 3. Title Card
+    // 4. Title Card
     document.getElementById('titleText').textContent = data.title;
     document.getElementById('titleCharCount').textContent = `${data.title.length} chars`;
 
-    // 4. Tags Card
+    // 5. Tags Card
     const tagsContainer = document.getElementById('tagsContainer');
     tagsContainer.innerHTML = '';
     const tagsCountBadge = document.getElementById('tagsCountBadge');
@@ -260,7 +293,7 @@ function renderMetadata(data) {
         tagsContainer.innerHTML = '<span class="text-xs text-slate-500 italic p-2">This video has no public tags.</span>';
     }
 
-    // 5. Description Card
+    // 6. Description Card
     const descContainer = document.getElementById('descContainer');
     const descText = data.description || 'No description provided.';
     descContainer.textContent = descText;
@@ -338,7 +371,25 @@ function setupCopyAndDownloads() {
         copyToClipboard(selectedThumbnailUrl, 'HD Thumbnail link copied!', this);
     });
 
-    // 10. Copy All Details (Full Summary)
+    // 10. NEW: Copy Made for Kids Status
+    document.getElementById('copyKidsStatusBtn').addEventListener('click', function() {
+        if (!currentMetadata) return;
+        copyToClipboard(currentMetadata.made_for_kids_label, `Copied: ${currentMetadata.made_for_kids_label}`, this);
+    });
+
+    // 11. NEW: Copy List / Playlist Name
+    document.getElementById('copyListNameBtn').addEventListener('click', function() {
+        if (!currentMetadata) return;
+        copyToClipboard(currentMetadata.list_name, `List name copied: ${currentMetadata.list_name}`, this);
+    });
+
+    // 12. NEW: Copy Listing Status (Public / Unlisted / Private)
+    document.getElementById('copyListingStatusBtn').addEventListener('click', function() {
+        if (!currentMetadata) return;
+        copyToClipboard(currentMetadata.listing_status, `Listing status copied: ${currentMetadata.listing_status}`, this);
+    });
+
+    // 13. Copy All Details (Full Summary)
     document.getElementById('copyAllSummaryBtn').addEventListener('click', function() {
         if (!currentMetadata) return;
         copyToClipboard(currentMetadata.summary_text, 'Full video summary copied!', this);
